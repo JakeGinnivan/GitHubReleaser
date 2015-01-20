@@ -1,3 +1,11 @@
+These releases are referenced on the Github Releases page,  https://github.com/JakeGinnivan/GitReleaseNotes/releases
+
+# 0.5.0  a64439d    Jun 25, 2014 
+- 17 commits to master since this release
+- Fixed a bunch of small issues
+- For diffs see https://github.com/JakeGinnivan/GitReleaseNotes/compare/0.5.0...master
+
+
 # 0.4.0 (25 May 2014)
 
  - [#35](https://github.com/JakeGinnivan/GitReleaseNotes/pull/35) - When specifying 'FromTag all' the issues closed for the first tag aren't included contributed by Petrik van der Velde ([pvandervelde](https://github.com/pvandervelde))
