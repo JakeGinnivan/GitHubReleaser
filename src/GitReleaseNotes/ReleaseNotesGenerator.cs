@@ -26,50 +26,113 @@ namespace GitReleaseNotes
 
         public async Task<SemanticReleaseNotes> GenerateReleaseNotesAsync(SemanticReleaseNotes releaseNotesToUpdate)
         {
-            var gitRepository = new Repository(Repository.Discover(_generationParameters.WorkingDirectory));
-            IIssueTracker issueTracker;
+            var repositoryInfo = new RepositoryInfo
+            {
+                Directory = _generationParameters.WorkingDirectory,
+                Url = _generationParameters.Repository.Url,
+                Branch = _generationParameters.Repository.Branch,
+                Authentication = _generationParameters.Repository.Authentication
+            };
+
+            using (var gitRepository = GitRepositoryFactory.CreateRepository(repositoryInfo))
+            {
+                var repository = gitRepository.Repository;
+
+                var issueTracker = CreateIssueTracker(repository);
+                if (issueTracker == null)
+                {
+                    throw new Exception(
+                        "Unable to determine the issue tracker, specify issue tracker type on the command line");
+                }
+
+                var categories = new Categories(_generationParameters.Categories, _generationParameters.AllLabels);
+                var tagToStartFrom = _generationParameters.AllTags
+                    ? repository.GetFirstCommit()
+                    : repository.GetLastTaggedCommit() ?? repository.GetFirstCommit();
+                var currentReleaseInfo = repository.GetCurrentReleaseInfo();
+                if (!string.IsNullOrEmpty(_generationParameters.Version))
+                {
+                    currentReleaseInfo.Name = _generationParameters.Version;
+                    currentReleaseInfo.When = DateTimeOffset.Now;
+                }
+                else
+                {
+                    currentReleaseInfo.Name = "vNext";
+                }
+
+                var releaseNotes = await GenerateReleaseNotesAsync(
+                    _generationParameters, repository, issueTracker,
+                    releaseNotesToUpdate, categories,
+                    tagToStartFrom, currentReleaseInfo);
+
+                return releaseNotes;
+            }
+        }
+
+        private IIssueTracker CreateIssueTracker(IRepository gitRepository)
+        {
+            IIssueTracker issueTracker = null;
+
+            // Step 1: try to use specified issue tracker
             if (_generationParameters.IssueTracker.Type.HasValue)
             {
+                Log.WriteLine("Creating issue tracker based on specified issue tracker");
+
                 issueTracker = IssueTrackerFactory.CreateIssueTracker(new IssueTrackerSettings(_generationParameters.IssueTracker.Server,
                         _generationParameters.IssueTracker.Type.Value)
-                    {
-                        Project = _generationParameters.IssueTracker.ProjectId,
-                        Authentication = _generationParameters.IssueTracker.Authentication.ToIssueTrackerSettings()
-                    });
-            }
-            else
-            {
-                if (!TryRemote(gitRepository, "upstream", _generationParameters, out issueTracker) &&
-                    !TryRemote(gitRepository, "origin", _generationParameters, out issueTracker))
                 {
-                    throw new Exception("Unable to guess issue tracker through remote, specify issue tracker type on the command line");
+                    Project = _generationParameters.IssueTracker.ProjectId,
+                    Authentication = _generationParameters.IssueTracker.Authentication.ToIssueTrackerSettings()
+                });
+            }
+
+            // Step 2: try to determine from issue tracker url
+            if (issueTracker == null)
+            {
+                if (!string.IsNullOrEmpty(_generationParameters.IssueTracker.Server))
+                {
+                    Log.WriteLine("Trying to determine issue tracker based on issue tracker url");
+
+                    if (IssueTrackerFactory.TryCreateIssueTrackerFromUrl(
+                        _generationParameters.IssueTracker.Server,
+                        _generationParameters.IssueTracker.ProjectId,
+                        _generationParameters.IssueTracker.Authentication.ToIssueTrackerSettings(),
+                        out issueTracker))
+                    {
+                        Log.WriteLine("Determined issue tracker based on issue tracker url");
+                    }
+                    else
+                    {
+                        Log.WriteLine("Could not determine issue tracker based on issue tracker url");
+                    }
                 }
             }
 
-            var categories = new Categories(_generationParameters.Categories, _generationParameters.AllLabels);
-            var tagToStartFrom = _generationParameters.AllTags
-                ? gitRepository.GetFirstCommit()
-                : gitRepository.GetLastTaggedCommit() ?? gitRepository.GetFirstCommit();
-            var currentReleaseInfo = gitRepository.GetCurrentReleaseInfo();
-            if (!string.IsNullOrEmpty(_generationParameters.Version))
+            // Step 3: try to determine from repository url
+            if (issueTracker == null)
             {
-                currentReleaseInfo.Name = _generationParameters.Version;
-                currentReleaseInfo.When = DateTimeOffset.Now;
-            }
-            else
-            {
-                currentReleaseInfo.Name = "vNext";
+                Log.WriteLine("Trying to determine issue tracker based on repository url");
+
+                if (!TryRemote(gitRepository, "upstream", _generationParameters, out issueTracker) &&
+                    !TryRemote(gitRepository, "origin", _generationParameters, out issueTracker))
+                {
+                    Log.WriteLine("Determined issue tracker based on repository url");
+                }
+                else
+                {
+                    Log.WriteLine("Could not determine issue tracker based on repository url");
+                }
             }
 
-            var releaseNotes = await GenerateReleaseNotesAsync(
-                _generationParameters, gitRepository, issueTracker,
-                releaseNotesToUpdate, categories,
-                tagToStartFrom, currentReleaseInfo);
+            if (issueTracker != null)
+            {
+                Log.WriteLine("Using issue tracker '{0}'", issueTracker.GetType().Name);
+            }
 
-            return releaseNotes;
+            return issueTracker;
         }
 
-        private static bool TryRemote(Repository gitRepository, string name, ReleaseNotesGenerationParameters context,
+        private static bool TryRemote(IRepository gitRepository, string name, ReleaseNotesGenerationParameters parameters,
             out IIssueTracker issueTracker)
         {
             var upstream = gitRepository.Network.Remotes[name];
@@ -78,12 +141,15 @@ namespace GitReleaseNotes
                 issueTracker = null;
                 return false;
             }
+
             return IssueTrackerFactory.TryCreateIssueTrackerFromUrl(
                 upstream.Url,
-                context.IssueTracker.Authentication.ToIssueTrackerSettings(),
+                parameters.IssueTracker.ProjectId,
+                parameters.IssueTracker.Authentication.ToIssueTrackerSettings(),
                 out issueTracker);
         }
 
+        // TODO: Why is generationParameters not used?
         public static async Task<SemanticReleaseNotes> GenerateReleaseNotesAsync(ReleaseNotesGenerationParameters generationParameters,
             IRepository gitRepo, IIssueTracker issueTracker, SemanticReleaseNotes previousReleaseNotes,
             Categories categories, TaggedCommit tagToStartFrom, ReleaseInfo currentReleaseInfo)
