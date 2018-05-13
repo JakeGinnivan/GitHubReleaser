@@ -13,7 +13,10 @@ namespace GitReleaseNotes
     public static class Program
     {
         // TODO Fix logging.. Just choose serilog or something which liblog picks up
-        private static readonly ILog Log = GitReleaseNotesEnvironment.Log;
+        private static ILog Log
+        {
+            get { return GitReleaseNotesEnvironment.Log; }
+        }
 
         public static int Main(string[] args)
         {
@@ -83,7 +86,7 @@ namespace GitReleaseNotes
             catch (Exception ex)
             {
                 exitCode = -2;
-                Log.WriteLine("An unexpected error occurred: {0}", ex.Message);
+                Log.WriteLine("An unexpected error occurred: {0}", ex.GetBaseException().Message);
             }
 
             if (Debugger.IsAttached)
